@@ -1,0 +1,90 @@
+name: Hotfix CI
+
+on:
+  pull_request:
+    branches: [hotfix/106-runtime]
+  push:
+    branches: [hotfix/106-runtime, ci/106-hotfix-gates]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hotfix-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  OPENAI_API_KEY: ''
+  OPENROUTER_API_KEY: ''
+  NOUS_API_KEY: ''
+
+jobs:
+  tests:
+    name: Linux tests (${{ matrix.slice }}/8)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-pm
+        with:
+          packages: pnpm
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          test-environment: 'true'
+          save-tools-cache: 'false'
+          save-python-cache: 'false'
+          save-node-cache: 'false'
+      - name: Verify SQLite WAL capability
+        run: |
+          "$HERMES_PYTHON" -c "import hermes_agent.compat as c; c.install(); import hermes_state_wal as w; assert not w.is_sqlite_wal_reset_vulnerable(), 'WAL-reset vulnerable SQLite'"
+      - name: Full canonical test suite slice
+        run: just test-all
+        env:
+          HERMES_TEST_SLICE: ${{ matrix.slice }}/8
+          HERMES_TEST_FORKSERVER: '1'
+          HERMES_TEST_WORKERS: '4'
+          HERMES_TEST_FILE_TIMEOUT: '600'
+      - uses: ./.github/actions/check-clean-worktree
+
+  lint:
+    name: Canonical blocking checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-pm
+        with:
+          packages: pnpm
+          extras: '["all"]'
+          test-environment: 'true'
+          save-tools-cache: 'false'
+          save-python-cache: 'false'
+          save-node-cache: 'false'
+      - run: just check
+      - uses: ./.github/actions/check-clean-worktree
+
+  gate:
+    name: hotfix-gate
+    if: always()
+    needs: [tests, lint]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every lane to succeed
+        env:
+          TEST_RESULT: ${{ needs.tests.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+        run: |
+          test "$TEST_RESULT" = success
+          test "$LINT_RESULT" = success
