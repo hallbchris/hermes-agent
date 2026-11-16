@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [hotfix/106-runtime]
   push:
-    branches: [hotfix/106-runtime, ci/106-hotfix-gates]
+    branches: [hotfix/106-runtime]
   workflow_dispatch:
 
 permissions:
