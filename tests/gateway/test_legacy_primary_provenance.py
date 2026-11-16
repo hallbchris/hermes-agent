@@ -88,25 +88,19 @@ async def test_legacy_binding_does_not_relax_identity_checks(monkeypatch, case):
             provenance['transport_profile'] = None
             assert restore_provenance(runner, restored, provenance) == home
         else:
-            if case == 'wrong-profile':
-                restored.profile = 'foreign'
-            elif case == 'wrong-runtime':
-                provenance['runtime_home'] = str(home / 'foreign')
-            elif case == 'wrong-transport':
-                provenance['transport_home'] = str(home / 'foreign')
-            elif case == 'wrong-connector':
-                provenance['connector'] = 'changed'
-            elif case == 'missing-connector':
-                del provenance['connector']
-            elif case == 'missing-home':
-                runner.config._runtime_profile_homes = []
-            elif case == 'ambiguous-home':
-                runner.config._runtime_profile_homes.append(('alias', home))
-            elif case == 'ambiguous-adapter':
-                runner._profile_adapters = {'alias': {Platform.DISCORD: adapter}}
-            elif case == 'ambiguous-route':
-                route = ProfileRoute(name='a', platform='discord', profile='default', chat_id='42')
-                runner.config.profile_routes = [route, route]
+            route = ProfileRoute(name='a', platform='discord', profile='default', chat_id='42')
+            mutations = {
+                'wrong-profile': lambda: setattr(restored, 'profile', 'foreign'),
+                'wrong-runtime': lambda: provenance.update(runtime_home=str(home / 'foreign')),
+                'wrong-transport': lambda: provenance.update(transport_home=str(home / 'foreign')),
+                'wrong-connector': lambda: provenance.update(connector='changed'),
+                'missing-connector': lambda: provenance.pop('connector'),
+                'missing-home': lambda: setattr(runner.config, '_runtime_profile_homes', []),
+                'ambiguous-home': lambda: runner.config._runtime_profile_homes.append(('alias', home)),
+                'ambiguous-adapter': lambda: setattr(runner, '_profile_adapters', {'alias': {Platform.DISCORD: adapter}}),
+                'ambiguous-route': lambda: setattr(runner.config, 'profile_routes', [route, route]),
+            }
+            mutations[case]()
             with pytest.raises(RuntimeStoreError):
                 restore_provenance(runner, restored, provenance)
         assert list_session_admissions(authority.db, session_id=sid, pending_only=False) == before
