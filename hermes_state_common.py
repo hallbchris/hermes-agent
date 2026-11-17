@@ -744,6 +744,8 @@ CREATE TABLE IF NOT EXISTS async_delegations (
     owner_execution_id TEXT,
     delivery_claim TEXT,
     delivery_claimed_at REAL,
+    -- Operator quarantine is a separate immutable audit, never a successful delivery.
+    quarantine_json TEXT,
     -- Mirrors the delegation tool's own CREATE TABLE (tools/async_delegation.py
     -- _initialize_schema). Keeping the canonical fresh-install shape identical
     -- to the tool's avoids a silent schema drift: the tool's lazy
