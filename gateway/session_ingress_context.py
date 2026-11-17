@@ -224,6 +224,13 @@ def restore_provenance(runner, source, provenance):
     candidate = copy(source)
     candidate.delivered_via_upstream_relay = 'relay' in provenance
     adapter, home, runtime_home, expected = _binding(runner, candidate, provenance.get('transport_profile'))
+    # Standalone native receipts predate multiplexing's explicit primary (None) field.
+    # The live binding still proves the same unique connector and both homes; only
+    # that absent optional field is compatible, never a relay seal or a routed owner.
+    if ('transport_profile' not in provenance and 'relay' not in provenance
+            and not source.profile and expected.get('transport_profile') is None
+            and home == runtime_home):
+        expected = {key: value for key, value in expected.items() if key != 'transport_profile'}
     if provenance != expected:
         raise RuntimeStoreError('profile_mismatch')
     source.delivered_via_upstream_relay = candidate.delivered_via_upstream_relay

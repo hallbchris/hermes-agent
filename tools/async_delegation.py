@@ -230,15 +230,19 @@ def _persist_dispatch(record: dict[str, Any]) -> None:
     except OSError:
         pass
     with _DB_LOCK, _transaction() as conn:
-        conn.execute("""INSERT OR REPLACE INTO async_delegations
+        cur = conn.execute("""INSERT OR REPLACE INTO async_delegations
                (delegation_id, origin_session, origin_ui_session_id,
                 parent_session_id, state, dispatched_at, updated_at,
                 delivery_state, delivery_attempts, owner_pid,
                 owner_started_at, task_json, origin_session_id)
-               VALUES (?, ?, ?, ?, 'running', ?, ?, 'pending', 0, ?, ?, ?, ?)""",
+               SELECT ?, ?, ?, ?, 'running', ?, ?, 'pending', 0, ?, ?, ?, ?
+               WHERE NOT EXISTS (SELECT 1 FROM async_delegations
+                                 WHERE delegation_id=? AND quarantine_json IS NOT NULL)""",
             (record["delegation_id"], record.get("session_key", ""), record.get("origin_ui_session_id", ""),
              record.get("parent_session_id"), record["dispatched_at"], now, os.getpid(), owner_started_at,
-             json.dumps(task_payload), record.get("origin_session_id", "")))
+             json.dumps(task_payload), record.get("origin_session_id", ""), record["delegation_id"]))
+        if cur.rowcount != 1:
+            raise ValueError("delegation_quarantined")
     _prune_durable_records()
 
 
@@ -246,6 +250,7 @@ def _prune_durable_records() -> None:
     """Bound terminal history, preferring delivered records for deletion."""
     require_ledger_owner()
     from tools.delegate_tool_auto_resume import KEEP_WAITING_UNITS_SQL as keep
+    keep += " AND quarantine_json IS NULL"
     cutoff = time.time() - _DURABLE_RETENTION_SECONDS
     with _DB_LOCK, _transaction() as conn:
         conn.execute(
@@ -277,11 +282,15 @@ def _persist_completion(event: dict[str, Any], result: dict[str, Any], *, delive
         return remote.complete(event, result, delivery)
     now = time.time()
     with _DB_LOCK, _transaction() as conn:
-        conn.execute("""UPDATE async_delegations SET state=?, completed_at=?, updated_at=?,
+        cur = conn.execute("""UPDATE async_delegations SET state=?, completed_at=?, updated_at=?,
                event_json=?, result_json=?, delivery_state=?
-               WHERE delegation_id=?""",
+               WHERE delegation_id=? AND quarantine_json IS NULL""",
             (event.get("status", "completed"), event.get("completed_at", now), now,
              json.dumps(event), json.dumps(result), delivery, event["delegation_id"]))
+        if cur.rowcount != 1 and conn.execute(
+                "SELECT 1 FROM async_delegations WHERE delegation_id=? AND quarantine_json IS NOT NULL",
+                (event["delegation_id"],)).fetchone():
+            raise ValueError("delegation_quarantined")
 
 
 def record_unit_child(delegation_id: str, entry: dict[str, Any]) -> None:
@@ -641,7 +650,8 @@ def mark_completion_delivered(delegation_id: str) -> bool:
     now = time.time()
     return _update_delivery(
         """UPDATE async_delegations SET delivery_state='delivered', delivered_at=?, updated_at=?
-           WHERE delegation_id=? AND delivery_state!='delivered'""", (now, now, delegation_id))
+           WHERE delegation_id=? AND delivery_state!='delivered'
+             AND quarantine_json IS NULL""", (now, now, delegation_id))
 
 
 def claim_completion_delivery(delegation_id: str, claim_id: str) -> bool:
@@ -1027,9 +1037,9 @@ def _dispatch_admitted(
         active_slots = {r.get("slot_key") or r["delegation_id"] for r in _records.values() if r.get("status") in _ACTIVE_STATES}
         if record["slot_key"] not in active_slots and len(active_slots) >= max_async_children:
             return {"status": "rejected", "error": capacity_error}
+        _persist_dispatch(record)  # refuse quarantined IDs before publishing an in-memory runner
         _records[delegation_id] = record
         live_units = sum(1 for r in _records.values() if r.get("status") in _LIVE_STATES)
-    _persist_dispatch(record)
     # Units of one call share a slot, so live units can exceed slots: size the pool by units or a
     # unit queues behind a full pool and the stale monitor kills it before its child ever starts.
     executor = _get_executor(max(max_async_children, live_units))
