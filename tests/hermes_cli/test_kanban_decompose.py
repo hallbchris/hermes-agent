@@ -28,6 +28,21 @@ def kanban_home(tmp_path, monkeypatch):
     return home
 
 
+def test_list_triage_ids_excludes_recurrence_escalated_only_on_request(kanban_home):
+    """Automatic decomposition must leave recurrence-escalated holds untouched."""
+    with kbc.connect() as conn:
+        ordinary = kb.create_task(conn, title="ordinary triage", triage=True)
+        escalated = kb.create_task(conn, title="held recurrence", triage=True)
+        conn.execute(
+            "UPDATE tasks SET block_kind = ?, block_recurrences = ? WHERE id = ?",
+            ("needs_input", 2, escalated),
+        )
+        conn.commit()
+
+    assert set(decomp.list_triage_ids()) == {ordinary, escalated}
+    assert decomp.list_triage_ids(exclude_recurrence_escalated=True) == [ordinary]
+
+
 def _fake_aux_response(content: str):
     resp = MagicMock()
     resp.choices = [MagicMock()]

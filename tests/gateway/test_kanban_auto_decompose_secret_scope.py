@@ -29,11 +29,15 @@ def test_auto_decompose_tick_reads_launch_profile_secrets_under_multiplex(monkey
 
     seen = {}
 
+    def list_triage_ids(**kwargs):
+        seen["list_kwargs"] = kwargs
+        return ["t1"]
+
     def fake_decompose(task_id, author=None):
         seen["value"] = ss.get_secret("ANTHROPIC_API_KEY")
         return SimpleNamespace(ok=True, fanout=False, child_ids=None, reason=None)
 
-    fake = SimpleNamespace(list_triage_ids=lambda: ["t1"], decompose_task=fake_decompose)
+    fake = SimpleNamespace(list_triage_ids=list_triage_ids, decompose_task=fake_decompose)
     monkeypatch.setitem(sys.modules, "hermes_cli.kanban_decompose", fake)
     monkeypatch.setattr(hermes_cli, "kanban_decompose", fake, raising=False)
 
@@ -45,6 +49,7 @@ def test_auto_decompose_tick_reads_launch_profile_secrets_under_multiplex(monkey
         ss.set_multiplex_active(False)
 
     assert decomposed == 1
+    assert seen["list_kwargs"] == {"exclude_recurrence_escalated": True}
     assert seen["value"] == "launch-profile-key"
     assert ss.current_secret_scope() is None
 
@@ -73,7 +78,7 @@ def test_auto_decompose_board_pin_stays_inside_the_tick(monkeypatch, tmp_path):
         other.join()
         return SimpleNamespace(ok=True, fanout=False, child_ids=None, reason=None)
 
-    fake = SimpleNamespace(list_triage_ids=lambda: ["t1"], decompose_task=fake_decompose)
+    fake = SimpleNamespace(list_triage_ids=lambda **_kwargs: ["t1"], decompose_task=fake_decompose)
     monkeypatch.setitem(sys.modules, "hermes_cli.kanban_decompose", fake)
     monkeypatch.setattr(hermes_cli, "kanban_decompose", fake, raising=False)
 

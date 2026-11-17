@@ -267,7 +267,7 @@ class _KanbanDispatcher:
                 # and spawned subprocess that names no board would resolve this one instead.
                 with scoped_current_board(slug):
                     try:
-                        triage_ids = _decomp.list_triage_ids()
+                        triage_ids = _decomp.list_triage_ids(exclude_recurrence_escalated=True)
                     except Exception as exc:
                         logger.debug("kanban auto-decompose: list_triage_ids failed on board %s (%s)", slug, exc)
                         triage_ids = []

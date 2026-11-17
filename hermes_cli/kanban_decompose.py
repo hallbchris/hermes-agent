@@ -336,8 +336,19 @@ def decompose_task(
     return _apply_fanout(task_id, parsed, routing, audit_author)
 
 
-def list_triage_ids(*, tenant: Optional[str] = None) -> list[str]:
-    """Return task ids currently in the triage column."""
+def list_triage_ids(
+    *, tenant: Optional[str] = None, exclude_recurrence_escalated: bool = False
+) -> list[str]:
+    """Return task ids currently in the triage column.
+
+    The automatic decomposer must not reinterpret a recurrence-escalated block
+    as fresh triage work. Manual decomposition retains the historical complete
+    triage inventory unless the caller explicitly requests the exclusion.
+    """
     with kbc.connect_closing() as conn:
-        rows = kb.list_tasks(conn, status="triage", tenant=tenant, limit=1000)
+        # Filter before applying the automatic per-tick cap. A large set of
+        # recurrence-escalated holds must not starve ordinary triage work.
+        rows = kb.list_tasks(conn, status="triage", tenant=tenant)
+    if exclude_recurrence_escalated:
+        rows = [row for row in rows if row.block_recurrences == 0]
     return [row.id for row in rows]
