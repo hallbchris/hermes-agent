@@ -2024,17 +2024,13 @@ class TestAsyncDelegationsSchemaAgreement:
         pre-existing delegation row that must survive every opening order."""
         import sqlite3
 
-        from hermes_state_common import SCHEMA_SQL
-
-        legacy_sql = SCHEMA_SQL.replace(
-            "    origin_session_id TEXT NOT NULL DEFAULT ''\n", ""
-        ).replace(
-            "    delivery_claimed_at REAL,\n",
-            "    delivery_claimed_at REAL\n",
-        )
+        # Freeze historical DDL: deleting columns from today's schema is brittle.
+        legacy_sql = (Path(__file__).parent / 'fixtures' / 'async_delegations_pre_origin.sql').read_text()
         conn = sqlite3.connect(db_path)
         try:
             conn.executescript(legacy_sql)
+            assert 'origin_session_id' not in self._table_info(conn)
+            assert 'quarantine_json' not in self._table_info(conn)
             conn.execute(
                 "INSERT INTO async_delegations (delegation_id, origin_session, origin_ui_session_id, state, dispatched_at, updated_at) VALUES ('legacy-1', 'sess-a', '', 'completed', 1.0, 1.0)"
             )
