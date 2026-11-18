@@ -139,6 +139,11 @@ class FooteredReply(str):
         instance.runtime_footer = footer
         return instance
 
+    def __getnewargs__(self):
+        # copy/deepcopy reconstruct str subclasses through __new__. Supply the
+        # original body, not the rendered value, or the footer is appended twice.
+        return (self[:-(len(self.runtime_footer) + 2)], self.runtime_footer)
+
 
 class _FooterCaption(str):
     """A photo caption that carries the runtime footer (``caption_with_footer``)."""
